@@ -179,10 +179,7 @@ Expect a minute or two before the Mac is up. After a FileVault unlock, macOS sto
 
 ## Limitations
 
-- **Preliminary.**
-  - Tested: discovery on a real network, and the login behaviour against OpenSSH (method sets, the success banner, a close/hang after the password, a dead-ended account).
-  - Not yet run against a Mac at the pre-boot stage. The unlock path is written against Apple's published `sshd-fvunlock` and `pam_basesystem` source, and one manual unlock on macOS 26.6.1 that showed the "System successfully unlocked." banner.
-  - Checked against the macOS 26.6.1 system image: the pre-boot environment's own `sshd_config` leaves all auth methods at their defaults, and the booted drop-in (2b) lives on the FileVault-encrypted Data volume, so it never applies at pre-boot.
+- **Verified against emulated Macs and the real OS's behaviour.** Discovery (systemd-resolved's Varlink mDNS), host-key identification, and all three verdicts — booted, pre-boot refusal, and unlock (the "System successfully unlocked." banner, and a clean close or a hang after the password) — have been driven end to end against emulated Macs on a two-host virtual network, with the systemd sandbox checked under systemd 259. The pre-boot unlock is an existing macOS procedure that works by hand on 26.6.1; lime automates it, with the server's behaviour pinned to Apple's `sshd-fvunlock`/`pam_basesystem` source and the 26.6.1 system image (see Sources).
 - **The password reaches the booted Mac too.** lime sends it on every check to confirm the Mac is up. The account lands nowhere (2b), and the Mac is pinned by host key, so only root on that same booted Mac could capture it, and they already have the decrypted disk.
 - **A wrong stored password costs attempts.** lime catches one while a Mac is booted and logs it as a warning. If a Mac is at pre-boot, each refused password uses up one of its attempts: macOS adds delays after a few wrong tries and requires Recovery after 10. lime retries on a doubling backoff. Update a changed password promptly (3a).
 - lime doesn't log a user in after the unlock. Anything that needs a login session, such as menu-bar apps or user LaunchAgents, waits until someone logs in, for example over Screen Sharing.
