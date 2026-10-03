@@ -1,0 +1,20 @@
+[package]
+name = "lime"
+version = "0.1.0"
+edition = "2024"
+description = "Unlock FileVault-encrypted Macs over macOS's pre-boot SSH unlock"
+license = "AGPL-3.0-only"
+publish = false
+
+[dependencies]
+anyhow = "1"
+futures-util = "0.3"
+russh = "0.63"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "fs"] }
+toml = "0.9"
+zlink = "0.7"
+
+[profile.release]
+strip = true
+lto = true

@@ -1,0 +1,29 @@
+# /etc/lime/lime.toml
+
+# Interfaces to browse mDNS on. mDNS does not cross subnets, so these must be on
+# the Macs' own network, with mDNS enabled in systemd-resolved
+# (`resolvectl mdns <interface>` says yes).
+interfaces = ["eth0"]
+
+# Seconds before a Mac is checked again (default 900). While its password keeps
+# being refused, or can't be sent, the wait doubles, up to max_retry (default
+# 21600).
+# retry = 900
+# max_retry = 21600
+
+[[mac]]
+# A label of your choosing. It's used in logs and names the Mac's password
+# credential, lime.<name>. lime does not use it to find the Mac: Macs are
+# identified by their host keys alone.
+name = "desk"
+# The hidden FileVault-enabled account that answers the pre-boot unlock. On a
+# booted Mac, a drop-in limits it to a password login that lands nowhere.
+unlock_user = "cpgjspoegwgrmymc"
+# Every host key the Mac has: /etc/ssh/ssh_host_*_key.pub on the Mac. Any of
+# them identifies this Mac; a server presenting a key not listed here gets
+# nothing but the handshake.
+host_keys = [
+  "ssh-ed25519 AAAA...",
+  "ecdsa-sha2-nistp256 AAAA...",
+  "ssh-rsa AAAA...",
+]
