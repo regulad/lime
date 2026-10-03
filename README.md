@@ -30,7 +30,7 @@ On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at 
 
 ## Setup
 
-The examples call the Mac `desk`. That's only a label you choose, used in lime's logs and its credential's name.
+The examples call the Mac `mymac`. That's only a label you choose, used in lime's logs and its credential's name.
 
 ### 1. Install lime on the Linux host
 
@@ -114,8 +114,8 @@ Copy every line into the Mac's `host_keys` (section 3b). Take them from the Mac 
 Each password is a credential named `lime.<name>`, matching the Mac's `name` in the config. Type it in with `systemd-ask-password`, which doesn't echo it or put it in your shell history:
 
 ```sh
-systemd-ask-password -n "desk unlock password:" \
-  | sudo systemd-creds encrypt --with-key=host+tpm2 --name=lime.desk - /etc/credstore.encrypted/lime.desk
+systemd-ask-password -n "mymac unlock password:" \
+  | sudo systemd-creds encrypt --with-key=host+tpm2 --name=lime.mymac - /etc/credstore.encrypted/lime.mymac
 ```
 
 Any password manager's command-line tool can be piped in the same way instead of `systemd-ask-password`. One trailing newline in a credential is ignored. `--with-key=host+tpm2` binds the credential to this machine's TPM *and* its credential secret, so a copied file is useless anywhere else. Without a TPM, use `--with-key=host`.
@@ -145,7 +145,7 @@ sudo systemd-run --pipe --wait --collect -p RuntimeMaxSec=60 \
 With your Macs booted, each should show up as the right Mac and as booted:
 
 ```
-desk (Desk-MacBook on eth0, 10.23.1.151:22): booted (only keyboard-interactive offered). Next check in 900s
+mymac (MacBook-Air on eth0, 10.23.1.151:22): booted (only keyboard-interactive offered). Next check in 900s
 ```
 
 If a booted Mac shows "at the pre-boot unlock: would send the password" instead, its drop-in (2b) isn't in effect: `sshd -T -C user=…` should show `authenticationmethods keyboard-interactive`. Other SSH servers on the network are listed once as "not one of the configured Macs".
@@ -163,7 +163,7 @@ journalctl -u lime -f
 Restart a Mac (`sudo shutdown -r now`) and watch the journal. Once the Mac reaches the pre-boot stage and announces itself, you should see:
 
 ```
-desk (Desk-MacBook on eth0, 10.23.1.151:22): unlocked; macOS is starting. Next check in 900s
+mymac (MacBook-Air on eth0, 10.23.1.151:22): unlocked; macOS is starting. Next check in 900s
 ```
 
 Expect a minute or two before the Mac is up. After a FileVault unlock, macOS stops at the login window: nobody is logged in.

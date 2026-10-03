@@ -15,7 +15,7 @@ interfaces = ["eth0"]
 # A label of your choosing. It's used in logs and names the Mac's password
 # credential, lime.<name>. lime does not use it to find the Mac: Macs are
 # identified by their host keys alone.
-name = "desk"
+name = "mymac"
 # The hidden FileVault-enabled account that answers the pre-boot unlock. On a
 # booted Mac, a drop-in limits it to a password login that lands nowhere.
 unlock_user = "cpgjspoegwgrmymc"
