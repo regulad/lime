@@ -66,15 +66,18 @@ sudo sysadminctl -addUser "$FVUSER" -fullName "FileVault unlock" -shell /usr/bin
 # Check it got a Secure Token. If not, grant one:
 sudo sysadminctl -secureTokenStatus "$FVUSER"
 #   sudo sysadminctl -secureTokenOn "$FVUSER" -password - -adminUser YOUR_ADMIN -adminPassword -
+```
 
-# Hide it from the login window.
+In **System Settings › General › Sharing**, make sure Remote Login lets the account in: if it allows access for only some users, add the account to that list. Leave it out of Screen Sharing and File Sharing ("Allow access for: Only these users"). Do this before the next step: a hidden account may not be offered in these lists.
+
+Then hide it from the login window:
+
+```sh
 sudo dscl . -create "/Users/$FVUSER" IsHidden 1
 
 sudo diskutil apfs updatePreboot /
 sudo fdesetup list -extended          # the account must be listed
 ```
-
-Also leave the account out of **System Settings › General › Sharing** for Screen Sharing and File Sharing ("Allow access for: Only these users").
 
 When you change this account's password, do it with its old password or with your admin's, so FileVault stays in step. Then update its credential on the Linux host (section 3a) straight away. A wrong stored password costs one of the Mac's password attempts every time lime tries it at pre-boot.
 
@@ -86,16 +89,20 @@ On a booted Mac, lime still logs in with the password to confirm the Mac is up. 
 sudo tee /etc/ssh/sshd_config.d/50-lime-unlock.conf <<EOF
 Match User $FVUSER
     AuthenticationMethods keyboard-interactive
+    KbdInteractiveAuthentication yes
     ForceCommand /usr/bin/false
     DisableForwarding yes
     PermitTTY no
 EOF
 
 sudo sshd -t                          # no output: the configuration is valid
-sudo sshd -T -C user="$FVUSER" | grep -Ei '^(authenticationmethods|forcecommand)'
+sudo sshd -T -C user="$FVUSER" | grep -Ei '^(authenticationmethods|kbdinteractiveauthentication|forcecommand)'
 #   must show: authenticationmethods keyboard-interactive
+#              kbdinteractiveauthentication yes
 #              forcecommand /usr/bin/false
 ```
+
+`KbdInteractiveAuthentication yes` keeps this working on a Mac whose password logins you've turned off. `PasswordAuthentication no` alone leaves `keyboard-interactive` on, but it's usually paired with `KbdInteractiveAuthentication no` (or the older `ChallengeResponseAuthentication no`), and then the booted Mac would drop lime's connection before any password is sent, so lime could never see that it's up. The line turns password logins back on for this one account only, which the pre-boot server offers anyway (see Limitations); every other account keeps your settings. If `sshd -T` still shows `no`, a `Match` block of yours that sshd reads earlier sets it first: the first value sshd reads wins.
 
 None of this reaches the pre-boot unlock. The file lives on the disk that is still locked at that point, and Apple's pre-boot SSH server uses only its own built-in settings. That's why the booted Mac offering only `keyboard-interactive`, while the pre-boot server offers its defaults, tells the two stages apart.
 
@@ -148,7 +155,7 @@ With your Macs booted, each should show up as the right Mac and as booted:
 mymac (MacBook-Air on eth0, 10.23.1.151:22): booted (only keyboard-interactive offered). Next check in 900s
 ```
 
-If a booted Mac shows "at the pre-boot unlock: would send the password" instead, its drop-in (2b) isn't in effect: `sshd -T -C user=…` should show `authenticationmethods keyboard-interactive`. Other SSH servers on the network are listed once as "not one of the configured Macs".
+If a booted Mac shows "at the pre-boot unlock: would send the password" instead, or its connection is dropped, its drop-in (2b) isn't in effect: `sshd -T -C user=…` should show the three lines listed there. Other SSH servers on the network are listed once as "not one of the configured Macs".
 
 #### d. Enable it
 
