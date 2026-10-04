@@ -47,37 +47,42 @@ sudo install -D -m 0644 README.md /usr/local/share/doc/lime/README.md
 
 #### a. A separate account that can only unlock the disk
 
-Any FileVault-enabled account can answer the pre-boot unlock; it doesn't have to be an administrator or the Mac's owner. A dedicated, hidden, standard account keeps your own password off the Linux host. Leaked, its password gives someone a decrypted Mac sitting at the login window: no Recovery, no admin, and no remote login.
-
-Give it an unguessable name. Unknown account names fail without using up any of the Mac's limited password attempts, so a random name stops strangers on the network from burning them. This makes 16 random lowercase letters, such as `cpgjspoegwgrmymc`:
+Run this on the Mac, with your admin account's name in place of `YOUR_ADMIN`:
 
 ```sh
+# An unguessable name: 16 random lowercase letters, such as cpgjspoegwgrmymc.
+# Keep it: it goes into lime's config as unlock_user.
 FVUSER=$(openssl rand -base64 96 | LC_ALL=C tr -dc 'a-z' | head -c 16); echo "$FVUSER"
-```
 
-Keep the name: it goes into lime's config as `unlock_user`. Then create the account:
-
-```sh
-# A standard user with no shell. Your admin credentials grant it a Secure Token,
-# which is what lets it unlock FileVault.
+# A standard user with no shell. Your admin credentials grant it a Secure Token.
 sudo sysadminctl -addUser "$FVUSER" -fullName "FileVault unlock" -shell /usr/bin/false \
      -password - -adminUser YOUR_ADMIN -adminPassword -
 
-# Check it got a Secure Token. If not, grant one:
+# Check it got a Secure Token. If not, grant one, then re-run updatePreboot and fdesetup below:
 sudo sysadminctl -secureTokenStatus "$FVUSER"
 #   sudo sysadminctl -secureTokenOn "$FVUSER" -password - -adminUser YOUR_ADMIN -adminPassword -
-```
 
-In **System Settings › General › Sharing**, make sure Remote Login lets the account in: if it allows access for only some users, add the account to that list. Leave it out of Screen Sharing and File Sharing ("Allow access for: Only these users"). Do this before the next step: a hidden account may not be offered in these lists.
+# Let it through Remote Login, if that allows only some users.
+if dscl . -read /Groups/com.apple.access_ssh RecordName >/dev/null 2>&1; then
+    sudo dseditgroup -o edit -a "$FVUSER" -t user com.apple.access_ssh
+    dseditgroup -o checkmember -m "$FVUSER" com.apple.access_ssh   # must say "yes …"
+fi
 
-Then hide it from the login window:
-
-```sh
+# Hide it from the login window.
 sudo dscl . -create "/Users/$FVUSER" IsHidden 1
 
 sudo diskutil apfs updatePreboot /
 sudo fdesetup list -extended          # the account must be listed
+
+# Last, in System Settings › General › Sharing, keep the account out of Screen Sharing
+# and File Sharing ("Allow access for: Only these users").
 ```
+
+**Why it's set up this way**
+- **A separate account:** any FileVault-enabled account can answer the pre-boot unlock; it doesn't have to be an administrator or the Mac's owner. A dedicated, hidden, standard account keeps your own password off the Linux host. Leaked, its password gives someone a decrypted Mac sitting at the login window: no Recovery, no admin, and no remote login.
+- **A random name:** unknown account names fail without using up any of the Mac's limited password attempts, so 16 random lowercase letters, such as `cpgjspoegwgrmymc`, stop strangers on the network from burning them.
+- **The Secure Token** is what lets the account unlock FileVault. Creating it with your admin's credentials grants one.
+- **Remote Login:** on a booted Mac, lime logs in as this account to confirm the Mac is up (2b), so Remote Login must let it in. Its "Allow access for" list is the group `com.apple.access_ssh`, which exists only while access is limited to some users; under "All users" the `if` skips it. System Settings may not offer this account in that list at all, which is why it's added from Terminal.
 
 When you change this account's password, do it with its old password or with your admin's, so FileVault stays in step. Then update its credential on the Linux host (section 3a) straight away. A wrong stored password costs one of the Mac's password attempts every time lime tries it at pre-boot.
 
