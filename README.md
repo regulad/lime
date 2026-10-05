@@ -4,7 +4,7 @@ lime unlocks FileVault-encrypted Macs that restarted on their own, such as after
 
 On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at a pre-boot stage. There, a small SSH server accepts a FileVault user's password and unlocks the disk. lime runs on an always-on Linux machine on the same network. It notices a Mac waiting there, checks by its host key that it really is that Mac, and answers with that Mac's password.
 
-**Tested working** on a MacBook Air (M1, 2020) running macOS Tahoe 26.6.1 (25G76).
+**Tested working** on a MacBook Air (M1, 2020) running macOS Tahoe 26.6.1 (25G76) and macOS Golden Gate 27.0.1 (26A434).
 
 (Like [Tang](https://github.com/latchset/tang), but a fruit.)
 
