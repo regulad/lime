@@ -11,7 +11,7 @@ On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at 
 - **Watching:** lime asks systemd-resolved over Varlink to browse mDNS for SSH servers (`_ssh._tcp`), and connects to each one that appears.
 - **Identifying the Mac:** Macs are identified by their pinned SSH host keys, not by name. The name a Mac announces over mDNS can differ from the one you gave it, and can change after a restart. A server whose host key isn't listed gets the handshake and nothing else. The pre-boot stage presents the same host keys as the booted Mac.
 - **Logging in:** lime sends the unlock account's password to its one hidden prompt, and reads what the Mac does with it:
-  - **At pre-boot**, the password unlocks the disk. Apple's SSH server says so with a login banner ("System successfully unlocked.") and then restarts the Mac into macOS, which tears the connection down — cleanly or with a hang, depending on the network. lime treats the banner, a close, or a hang after the password all as the unlock, and never mistakes any of them for a refusal (a wrong password always comes back as an explicit refusal).
+  - **At pre-boot**, the password unlocks the disk. Apple's SSH server says so mid-login ("System successfully unlocked.") and then restarts the Mac into macOS, which tears the connection down — cleanly or with a hang, depending on the network. lime treats that message, a close, or a hang after the password all as the unlock, and never mistakes any of them for a refusal (a wrong password always comes back as an explicit refusal).
   - **A booted Mac** accepts the password but lands the account nowhere: a drop-in restricts it to a login with no shell, no command and no forwarding. lime notices it was let in and leaves the Mac alone.
   - **A refused password** means a wrong stored password, which lime logs and retries on a doubling backoff. A drop-in that offers *only* keyboard-interactive marks a booted Mac, so lime can tell a booted Mac's quirks apart from a genuine pre-boot refusal.
 - **Secrets:** the passwords are systemd credentials, encrypted to the Linux host's TPM and decrypted only into lime's private credentials directory.
@@ -55,8 +55,8 @@ Run this on the Mac, with your admin account's name in place of `YOUR_ADMIN`:
 # Keep it: it goes into lime's config as unlock_user.
 FVUSER=$(openssl rand -base64 96 | LC_ALL=C tr -dc 'a-z' | head -c 16); echo "$FVUSER"
 
-# A standard user with no shell. Your admin credentials grant it a Secure Token.
-sudo sysadminctl -addUser "$FVUSER" -fullName "FileVault unlock" -shell /usr/bin/false \
+# A standard user whose shell runs nothing. Your admin credentials grant it a Secure Token.
+sudo sysadminctl -addUser "$FVUSER" -fullName "FileVault unlock" -shell /usr/bin/true \
      -password - -adminUser YOUR_ADMIN -adminPassword -
 
 # Check it got a Secure Token. If not, grant one, then re-run updatePreboot and fdesetup below:
@@ -83,6 +83,7 @@ sudo fdesetup list -extended          # the account must be listed
 - **A separate account:** any FileVault-enabled account can answer the pre-boot unlock; it doesn't have to be an administrator or the Mac's owner. A dedicated, hidden, standard account keeps your own password off the Linux host. Leaked, its password gives someone a decrypted Mac sitting at the login window: no Recovery, no admin, and no remote login.
 - **A random name:** unknown account names fail without using up any of the Mac's limited password attempts, so 16 random lowercase letters, such as `cpgjspoegwgrmymc`, stop strangers on the network from burning them.
 - **The Secure Token** is what lets the account unlock FileVault. Creating it with your admin's credentials grants one.
+- **`/usr/bin/true` as its shell, not `/usr/bin/false`:** macOS turns away an account whose shell is `/usr/bin/false` after accepting its password, so a booted Mac would refuse lime's login and lime would log it as a refused password. `true` runs nothing either: sshd runs the drop-in's `ForceCommand` (2b) through the account's shell, which ignores it. An account made with `/usr/bin/false` can be switched with `sudo dscl . -create "/Users/$FVUSER" UserShell /usr/bin/true`.
 - **Remote Login:** on a booted Mac, lime logs in as this account to confirm the Mac is up (2b), so Remote Login must let it in. Its "Allow access for" list is the group `com.apple.access_ssh`, which exists only while access is limited to some users; under "All users" the `if` skips it. System Settings may not offer this account in that list at all, which is why it's added from Terminal.
 
 When you change this account's password, do it with its old password or with your admin's, so FileVault stays in step. Then update its credential on the Linux host (section 3a) straight away. A wrong stored password costs one of the Mac's password attempts every time lime tries it at pre-boot.
@@ -162,7 +163,7 @@ sudo systemd-run --pipe --wait --collect -p RuntimeMaxSec=60 \
 With your Macs booted, each should show up as the right Mac and as booted:
 
 ```
-mymac (MacBook-Air on eth0, 10.23.1.151:22): booted (only keyboard-interactive offered). Next check in 900s
+mymac (MacBook-Air on eth0, 10.23.1.151:22): booted (only keyboard-interactive offered). Next check in 30s
 ```
 
 If a booted Mac shows "at the pre-boot unlock: would send the password" instead, or its connection is dropped, its drop-in (2b) isn't in effect: `sshd -T -C user=…` should show the three lines listed there. Other SSH servers on the network are listed once as "not one of the configured Macs".
@@ -180,14 +181,14 @@ journalctl -u lime -f
 Restart a Mac (`sudo shutdown -r now`) and watch the journal. Once the Mac reaches the pre-boot stage and announces itself, you should see:
 
 ```
-mymac (MacBook-Air on eth0, 10.23.1.151:22): unlocked; macOS is starting. Next check in 900s
+mymac (MacBook-Air on eth0, 10.23.1.151:22): unlocked; macOS is starting. Next check in 30s
 ```
 
 Expect a minute or two before the Mac is up. After a FileVault unlock, macOS stops at the login window: nobody is logged in.
 
 ## Running it
 
-- **Each Mac's schedule** is kept in `/var/lib/lime/<name>`: when it may next be checked, and the wait after the next refusal. To have lime try a Mac again right away, run `sudo rm /var/lib/private/lime/<name>` and restart lime. A Mac whose SSH announcement disappears and comes back, as in a restart, is also tried again right away.
+- **Each Mac's schedule** is kept in `/var/lib/lime/<name>`: when it may next be checked, and the wait after the next refusal. A Mac that's up and working is checked every `heartbeat` seconds (30 by default); one whose password is refused waits `base_retry` seconds (900 by default), doubling while it keeps refusing. To have lime try a Mac again right away, run `sudo rm /var/lib/private/lime/<name>` and restart lime.
 - **Adding a Mac:** sections 2a–2c on the Mac, then its `[[mac]]` entry, its `lime.<name>` credential, and `sudo systemctl restart lime`.
 - **Changing a password:** re-run 3a for that Mac and restart lime.
 - **Log priorities:**
@@ -196,7 +197,7 @@ Expect a minute or two before the Mac is up. After a FileVault unlock, macOS sto
 
 ## Limitations
 
-- **Verified against emulated Macs and the real OS's behaviour.** Discovery (systemd-resolved's Varlink mDNS), host-key identification, and all three verdicts — booted, pre-boot refusal, and unlock (the "System successfully unlocked." banner, and a clean close or a hang after the password) — have been driven end to end against emulated Macs on a two-host virtual network, with the systemd sandbox checked under systemd 259. The pre-boot unlock is an existing macOS procedure that works by hand on 26.6.1; lime automates it, with the server's behaviour pinned to Apple's `sshd-fvunlock`/`pam_basesystem` source and the 26.6.1 system image (see Sources).
+- **Verified against emulated Macs and the real OS's behaviour.** Discovery (systemd-resolved's Varlink mDNS), host-key identification, and all three verdicts — booted, pre-boot refusal, and unlock (the "System successfully unlocked." message, and a clean close or a hang after the password) — have been driven end to end against emulated Macs on a two-host virtual network, with the systemd sandbox checked under systemd 259. The pre-boot unlock is an existing macOS procedure that works by hand on 26.6.1; lime automates it, with the server's behaviour pinned to Apple's `sshd-fvunlock`/`pam_basesystem` source and the 26.6.1 system image (see Sources).
 - **The password reaches the booted Mac too.** lime sends it on every check to confirm the Mac is up. The account lands nowhere (2b), and the Mac is pinned by host key, so only root on that same booted Mac could capture it, and they already have the decrypted disk.
 - **A wrong stored password costs attempts.** lime catches one while a Mac is booted and logs it as a warning. If a Mac is at pre-boot, each refused password uses up one of its attempts: macOS adds delays after a few wrong tries and requires Recovery after 10. lime retries on a doubling backoff. Update a changed password promptly (3a).
 - lime doesn't log a user in after the unlock. Anything that needs a login session, such as menu-bar apps or user LaunchAgents, waits until someone logs in, for example over Screen Sharing.
@@ -212,6 +213,7 @@ What lime relies on about the pre-boot unlock, and where each fact comes from. C
 - **The pre-boot server presents the Mac's own host keys** (so pinning identifies it). On a normal boot, `sshd-keygen-wrapper` copies each host key from `/etc/ssh` on the Data volume to the Preboot volume at `…/<volumeGroupUUID>/var/db/sshd`; the Preboot volume is not FileVault-encrypted, so the keys are readable before unlock. At pre-boot the BaseSystem sshd is launched with `-oHostKey=` pointing there — the source comment: "use the host keys that were previously sync'd from the data volume." A key stored wrapped (`<name>.enc` + `<name>.refkey`) is unwrapped through the Secure Enclave (`AKSRefKey`) into `/tmp/ssh` first. (`OpenSSH`, `sshd-keygen-wrapper/SSHDWrapper.swift`.)
 - **Pre-boot offers publickey, password and keyboard-interactive.** Confirmed from the 26.6.1 BaseSystem image (IPSW image `022-22048`, which holds `/usr/libexec/sshd-fvunlock`, `sshd-keygen-wrapper` and `/usr/share/pam.d/sshd-basesystem`): its `sshd_config` leaves every auth method at the OpenSSH default, and its only `sshd_config.d` drop-in, Apple's `100-macos.conf`, restricts nothing. Matches a live observation on a 26.6.1 Mac.
 - **Our booted drop-in can't leak into pre-boot.** `/etc` → `/private/etc`, which lives on the FileVault-encrypted **Data volume**: on the sealed System volume it exists only as a seed template under `System/Library/Templates/Data/private/etc`. At pre-boot the Data volume is locked, so `50-lime-unlock.conf` is unreadable; the BaseSystem sshd reads its own `/etc`. The two environments never share a config.
-- **"System successfully unlocked." is an SSH banner, not shell output.** `pam_modules`' `pam_basesystem.m` runs `/usr/libexec/sshd-fvunlock`, then sends that text with `pam_prompt(PAM_TEXT_INFO, …)` and calls `reboot3(RB3_PIVOTROOT)`. OpenSSH delivers a PAM text message as `SSH_MSG_USERAUTH_BANNER` during authentication (`auth2.c`), before `SSH_MSG_USERAUTH_SUCCESS` and before any channel or shell — so it cannot be a login shell or `ForceCommand` feed. lime reads it via russh's `auth_banner` callback.
-- **A booted Mac just completes the login.** With the drop-in's `ForceCommand /usr/bin/false` and `DisableForwarding`, authentication succeeds and the account can do nothing; lime disconnects without opening a session. Verified against OpenSSH 10 in a container, along with the method-set difference and the close/hang after a pre-boot unlock.
+- **"System successfully unlocked." comes during authentication, not from a shell.** `pam_modules`' `pam_basesystem.m` runs `/usr/libexec/sshd-fvunlock`, then sends that text with `pam_prompt(PAM_TEXT_INFO, …)` and calls `reboot3(RB3_PIVOTROOT)`. Over keyboard-interactive, OpenSSH passes PAM's text messages on as the instruction of a further round with no prompts (`auth-pam.c`), which is how a live Mac sent it: "System successfully unlocked.\nYou may now use SSH to authenticate normally." That comes before `SSH_MSG_USERAUTH_SUCCESS` and before any channel or shell, so it cannot be a login shell or `ForceCommand` feed. lime looks for it there, and also in a login banner (`SSH_MSG_USERAUTH_BANNER`, russh's `auth_banner`).
+- **A booted Mac just completes the login.** With the drop-in's `ForceCommand /usr/bin/false` and `DisableForwarding`, authentication succeeds and the account can do nothing; lime disconnects without opening a session. Verified against OpenSSH 10 in a container, along with the method-set difference and the close/hang after a pre-boot unlock. The container has no macOS PAM, so the next point was found on a live Mac.
+- **A booted Mac turns away a `/usr/bin/false` shell.** `pam_modules`' `pam_opendirectory` account check calls `od_record_check_shell` (`common/Common.c`), which denies an account whose shell is exactly `/usr/bin/false`. sshd runs the account check only once the password is accepted, and logs any failure of it as "PAM: user account has expired"; lime sees a refusal. Hence `/usr/bin/true` in 2a.
 - **A FileVault SSH unlock logs nobody in.** `sshd-fvunlock` pivots into macOS, which boots to the login window; lime doesn't need `DisableFDEAutoLogin`.

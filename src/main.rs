@@ -7,8 +7,8 @@
 //! lime then logs in as that Mac's unlock account, answering its single hidden
 //! keyboard-interactive prompt with the account's password:
 //!
-//! - At the pre-boot unlock, that unlocks the disk. Apple's `pam_basesystem` says so in
-//!   a login banner and pivots into macOS mid-connection. lime treats the banner, or a
+//! - At the pre-boot unlock, that unlocks the disk. Apple's `pam_basesystem` says so
+//!   mid-login and pivots into macOS mid-connection. lime treats that message, or a
 //!   close or hang after the password, as the unlock, and drops the connection.
 //! - A booted Mac completes the login, and its drop-in turns the account away
 //!   (`ForceCommand /usr/bin/false`, no forwarding); lime disconnects without opening
@@ -42,7 +42,7 @@ use tokio::{sync::mpsc, time};
 const RESOLVE: &str = "/run/systemd/resolve/io.systemd.Resolve";
 const SSH: &str = "_ssh._tcp";
 const TIMEOUT: Duration = Duration::from_secs(20);
-/// The login banner `pam_basesystem` sends once the pre-boot unlock has succeeded.
+/// The text `pam_basesystem` sends once the pre-boot unlock has succeeded.
 const UNLOCKED: &str = "System successfully unlocked.";
 
 /// Logs to stderr with a sd-daemon(3) priority prefix, which journald turns into
@@ -58,9 +58,12 @@ macro_rules! log {
 struct Config {
     /// Network interfaces to browse mDNS on.
     interfaces: Vec<String>,
-    /// Seconds before a Mac is tried again (default 900). Doubles while it keeps
-    /// refusing.
-    retry: Option<u64>,
+    /// Seconds before a Mac that's up and working is checked again, or an address
+    /// that couldn't be reached is tried again (default 30).
+    heartbeat: Option<u64>,
+    /// Seconds before a Mac that refused is first tried again (default 900). Doubles
+    /// while it keeps refusing.
+    base_retry: Option<u64>,
     /// Upper bound for that backoff (default 21600).
     max_retry: Option<u64>,
     mac: Vec<Mac>,
@@ -83,7 +86,8 @@ struct Ctx {
     macs: Arc<Vec<Mac>>,
     ssh: Arc<client::Config>,
     state: PathBuf,
-    retry: u64,
+    heartbeat: u64,
+    base_retry: u64,
     max_retry: u64,
     dry_run: bool,
 }
@@ -113,9 +117,10 @@ fn load(path: &str, dry_run: bool) -> Result<(Vec<String>, Ctx)> {
     }
     let state = std::env::var_os("STATE_DIRECTORY").map_or_else(|| PathBuf::from("/var/lib/lime"), PathBuf::from);
     let ssh = client::Config { inactivity_timeout: Some(TIMEOUT), ..Default::default() };
-    let retry = cfg.retry.unwrap_or(900);
-    let max_retry = cfg.max_retry.unwrap_or(21600).max(retry);
-    let ctx = Ctx { macs: Arc::new(macs), ssh: Arc::new(ssh), state, retry, max_retry, dry_run };
+    let heartbeat = cfg.heartbeat.unwrap_or(30);
+    let base_retry = cfg.base_retry.unwrap_or(900);
+    let max_retry = cfg.max_retry.unwrap_or(21600).max(base_retry);
+    let ctx = Ctx { macs: Arc::new(macs), ssh: Arc::new(ssh), state, heartbeat, base_retry, max_retry, dry_run };
     Ok((cfg.interfaces, ctx))
 }
 
@@ -243,8 +248,9 @@ impl client::Handler for Identify {
     }
 
     /// SSH_MSG_USERAUTH_BANNER: sshd's own message during authentication, which
-    /// nothing the account runs can produce. `pam_basesystem` sends this once the
-    /// disk is unlocked, just before it restarts the Mac into macOS.
+    /// nothing the account runs can produce. A real Mac sends the unlock's success
+    /// text in a keyboard-interactive round instead (`says_unlocked`); lime takes it
+    /// from a banner too.
     async fn auth_banner(&mut self, banner: &str, _: &mut client::Session) -> Result<(), Self::Error> {
         if banner.contains(UNLOCKED) {
             self.unlocked.store(true, Ordering::Release);
@@ -279,6 +285,14 @@ enum Outcome {
     Refused(String),
 }
 
+/// Whether a keyboard-interactive round carries `pam_basesystem`'s success text.
+/// OpenSSH passes PAM's text messages on as a round's instruction (as a Mac at the
+/// pre-boot unlock does, in a round with no prompts), or ahead of its next prompt.
+fn says_unlocked(round: &Kbd) -> bool {
+    let Kbd::InfoRequest { instructions, prompts, .. } = round else { return false };
+    instructions.contains(UNLOCKED) || prompts.iter().any(|p| p.prompt.contains(UNLOCKED))
+}
+
 /// Logs in as the Mac's unlock account with its password.
 async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, ctx: &Ctx, mac: &Mac) -> Result<Outcome> {
     let user = &mac.unlock_user;
@@ -310,7 +324,7 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
     let password = credential(&format!("lime.{}", mac.name))?;
     let mut reply = time::timeout(TIMEOUT, ssh.authenticate_keyboard_interactive_respond(vec![password])).await;
     loop {
-        if unlocked.load(Ordering::Acquire) {
+        if unlocked.load(Ordering::Acquire) || matches!(&reply, Ok(Ok(round)) if says_unlocked(round)) {
             return Ok(Outcome::Unlocked);
         }
         let why: String = match reply {
@@ -323,7 +337,7 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
             // while the Secure Enclave enforces a delay.
             Ok(Ok(Kbd::InfoRequest { instructions, .. })) if !instructions.trim().is_empty() => format!("the Mac says {:?}", instructions.trim()),
             // An empty round: PAM accepted the password. Answer it; the Mac may send
-            // its banner and pivot instead of replying, which the checks above catch.
+            // its success text and pivot instead of replying, which the checks above catch.
             Ok(Ok(Kbd::InfoRequest { .. })) => {
                 reply = time::timeout(TIMEOUT, ssh.authenticate_keyboard_interactive_respond(vec![])).await;
                 continue;
@@ -355,14 +369,14 @@ fn load_schedule(ctx: &Ctx, mac: &Mac) -> Schedule {
         let mut n = s.split_whitespace().map(|v| v.parse().ok());
         Some(Schedule { not_before: n.next()??, backoff: n.next()?? })
     });
-    saved.unwrap_or(Schedule { not_before: 0, backoff: ctx.retry })
+    saved.unwrap_or(Schedule { not_before: 0, backoff: ctx.base_retry })
 }
 
 /// Pushes the next try back: by the current backoff after a refusal (which then
-/// doubles), by `retry` after anything else. Returns the wait in seconds.
+/// doubles), by `heartbeat` after anything else. Returns the wait in seconds.
 fn reschedule(ctx: &Ctx, mac: &Mac, s: &mut Schedule, refused: bool) -> u64 {
-    let wait = if refused { s.backoff } else { ctx.retry };
-    *s = Schedule { not_before: now() + wait, backoff: if refused { (s.backoff * 2).min(ctx.max_retry) } else { ctx.retry } };
+    let wait = if refused { s.backoff } else { ctx.heartbeat };
+    *s = Schedule { not_before: now() + wait, backoff: if refused { (s.backoff * 2).min(ctx.max_retry) } else { ctx.base_retry } };
     // A dry run's schedule only stops it repeating itself; the service shouldn't inherit it.
     if !ctx.dry_run
         && let Err(e) = std::fs::write(ctx.state.join(&mac.name), format!("{} {}\n", s.not_before, s.backoff))
@@ -374,10 +388,9 @@ fn reschedule(ctx: &Ctx, mac: &Mac, s: &mut Schedule, refused: bool) -> u64 {
 
 // --- main -----------------------------------------------------------------------
 
-/// An `_ssh._tcp` instance currently or recently announced.
+/// An `_ssh._tcp` instance currently announced.
 struct Service {
     addr: SocketAddr,
-    present: bool,
     /// Not before this: a pause after a connection error.
     wait_until: Instant,
     /// `None` until connected once, then which Mac it is, if any.
@@ -401,7 +414,9 @@ async fn visit(ctx: &Ctx, key: &str, svc: &mut Service, schedules: &mut [Schedul
             return log!(6, "{key} ({}): not one of the configured Macs", svc.addr);
         }
         Err(e) => {
-            svc.wait_until = Instant::now() + Duration::from_secs(ctx.retry);
+            // No password was sent, so no need to back off: this is often a Mac
+            // that's restarting.
+            svc.wait_until = Instant::now() + Duration::from_secs(ctx.heartbeat);
             return log!(4, "{key} ({}): {e:#}", svc.addr);
         }
     };
@@ -488,20 +503,16 @@ async fn run() -> Result<()> {
                 let Event { ifindex, name, added } = event.context("every watcher stopped")?;
                 let key = (ifindex, name);
                 if !added {
-                    if let Some(svc) = services.get_mut(&key) { svc.present = false; }
+                    services.remove(&key);
                     continue;
                 }
-                // Gone and back: likely a restart, so a backed-off Mac may be tried right away.
-                if let Some(Service { present: false, mac: Some(Some(i)), .. }) = services.get(&key) {
-                    schedules[*i].not_before = 0;
-                }
                 match resolve(&mut resolver, ifindex, &key.1).await {
-                    Ok(addr) => { services.insert(key, Service { addr, present: true, wait_until: Instant::now(), mac: None }); }
+                    Ok(addr) => { services.insert(key, Service { addr, wait_until: Instant::now(), mac: None }); }
                     Err(e) => log!(4, "{} on {}: could not resolve: {e:#}", key.1, ifnames[&ifindex]),
                 }
             }
             _ = tick.tick() => {
-                for ((ifindex, name), svc) in services.iter_mut().filter(|(_, s)| s.present) {
+                for ((ifindex, name), svc) in services.iter_mut() {
                     visit(&ctx, &format!("{name} on {}", ifnames[ifindex]), svc, &mut schedules).await;
                 }
             }

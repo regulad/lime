@@ -5,10 +5,12 @@
 # (`resolvectl mdns <interface>` says yes).
 interfaces = ["eth0"]
 
-# Seconds before a Mac is checked again (default 900). While its password keeps
-# being refused, or can't be sent, the wait doubles, up to max_retry (default
-# 21600).
-# retry = 900
+# Seconds before a Mac that's up and working is checked again (default 30). One
+# whose password was refused, or couldn't be sent, waits base_retry seconds
+# instead (default 900), and the wait doubles while that keeps happening, up to
+# max_retry (default 21600).
+# heartbeat = 30
+# base_retry = 900
 # max_retry = 21600
 
 [[mac]]
