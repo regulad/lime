@@ -188,7 +188,7 @@ Expect a minute or two before the Mac is up. After a FileVault unlock, macOS sto
 
 ## Running it
 
-- **Each Mac's schedule** is kept in `/var/lib/lime/<name>`: when it may next be checked, and the wait after the next refusal. A Mac that's up and working is checked every `heartbeat` seconds (30 by default); one whose password is refused waits `base_retry` seconds (900 by default), doubling while it keeps refusing. To have lime try a Mac again right away, run `sudo rm /var/lib/private/lime/<name>` and restart lime.
+- **Each Mac's schedule** is kept in `/var/lib/lime/<name>`: when it may next be checked, and the wait after the next refusal. A Mac that's up and working is checked every `heartbeat` seconds (30 by default), as is one that couldn't be checked, such as a Mac still starting; one whose password is refused waits `base_retry` seconds (900 by default), doubling while it keeps refusing. To have lime try a Mac again right away, run `sudo rm /var/lib/private/lime/<name>` and restart lime.
 - **Adding a Mac:** sections 2a–2c on the Mac, then its `[[mac]]` entry, its `lime.<name>` credential, and `sudo systemctl restart lime`.
 - **Changing a password:** re-run 3a for that Mac and restart lime.
 - **Log priorities:**

@@ -58,8 +58,8 @@ macro_rules! log {
 struct Config {
     /// Network interfaces to browse mDNS on.
     interfaces: Vec<String>,
-    /// Seconds before a Mac that's up and working is checked again, or an address
-    /// that couldn't be reached is tried again (default 30).
+    /// Seconds before a Mac that's up and working is checked again (default 30), as
+    /// is one that couldn't be checked, such as a Mac still starting.
     heartbeat: Option<u64>,
     /// Seconds before a Mac that refused is first tried again (default 900). Doubles
     /// while it keeps refusing.
@@ -273,7 +273,7 @@ async fn connect(ctx: &Ctx, addr: SocketAddr, unlocked: &Arc<AtomicBool>) -> Res
 }
 
 /// What a visit found. Anything else (an `Err`) is a misconfiguration or a fault,
-/// such as a booted Mac refusing the password.
+/// such as a Mac that stalls mid-login while it starts up; no password was refused.
 enum Outcome {
     /// Booted: it accepted the password and turned the account away.
     Booted,
@@ -281,8 +281,8 @@ enum Outcome {
     Locked,
     /// The pre-boot unlock accepted the password and is starting macOS.
     Unlocked,
-    /// The pre-boot unlock refused the password, and why.
-    Refused(String),
+    /// The password was refused, and why: at the pre-boot unlock, or by a booted Mac.
+    Refused { why: String, booted: bool },
 }
 
 /// Whether a keyboard-interactive round carries `pam_basesystem`'s success text.
@@ -343,10 +343,7 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
                 continue;
             }
         };
-        if booted {
-            bail!("booted, but {why}");
-        }
-        return Ok(Outcome::Refused(why));
+        return Ok(Outcome::Refused { why, booted });
     }
 }
 
@@ -372,11 +369,26 @@ fn load_schedule(ctx: &Ctx, mac: &Mac) -> Schedule {
     saved.unwrap_or(Schedule { not_before: 0, backoff: ctx.base_retry })
 }
 
+/// How a visit went, for scheduling the next one.
+enum Verdict {
+    /// Up and working, or just unlocked.
+    Fine,
+    /// The password was refused.
+    Refused,
+    /// Anything else: nothing was learned about the password.
+    Fault,
+}
+
 /// Pushes the next try back: by the current backoff after a refusal (which then
-/// doubles), by `heartbeat` after anything else. Returns the wait in seconds.
-fn reschedule(ctx: &Ctx, mac: &Mac, s: &mut Schedule, refused: bool) -> u64 {
-    let wait = if refused { s.backoff } else { ctx.heartbeat };
-    *s = Schedule { not_before: now() + wait, backoff: if refused { (s.backoff * 2).min(ctx.max_retry) } else { ctx.base_retry } };
+/// doubles), by `heartbeat` after anything else. Only a Mac that's fine resets the
+/// backoff, so faults between refusals can't shorten it. Returns the wait in seconds.
+fn reschedule(ctx: &Ctx, mac: &Mac, s: &mut Schedule, verdict: Verdict) -> u64 {
+    let (wait, backoff) = match verdict {
+        Verdict::Fine => (ctx.heartbeat, ctx.base_retry),
+        Verdict::Refused => (s.backoff, (s.backoff * 2).min(ctx.max_retry)),
+        Verdict::Fault => (ctx.heartbeat, s.backoff),
+    };
+    *s = Schedule { not_before: now() + wait, backoff };
     // A dry run's schedule only stops it repeating itself; the service shouldn't inherit it.
     if !ctx.dry_run
         && let Err(e) = std::fs::write(ctx.state.join(&mac.name), format!("{} {}\n", s.not_before, s.backoff))
@@ -433,24 +445,25 @@ async fn visit(ctx: &Ctx, key: &str, svc: &mut Service, schedules: &mut [Schedul
     let who = format!("{} ({key}, {})", mac.name, svc.addr);
     match outcome {
         Ok(Outcome::Booted) => {
-            let wait = reschedule(ctx, mac, schedule, false);
+            let wait = reschedule(ctx, mac, schedule, Verdict::Fine);
             let how = if ctx.dry_run { "booted (only keyboard-interactive offered)" } else { "booted (password accepted, account turned away)" };
             log!(6, "{who}: {how}. Next check in {wait}s");
         }
         Ok(Outcome::Locked) => {
-            reschedule(ctx, mac, schedule, false);
+            reschedule(ctx, mac, schedule, Verdict::Fine);
             log!(5, "{who}: at the pre-boot unlock: would send the password. Dry run");
         }
         Ok(Outcome::Unlocked) => {
-            let wait = reschedule(ctx, mac, schedule, false);
+            let wait = reschedule(ctx, mac, schedule, Verdict::Fine);
             log!(5, "{who}: unlocked; macOS is starting. Next check in {wait}s");
         }
-        Ok(Outcome::Refused(why)) => {
-            let wait = reschedule(ctx, mac, schedule, true);
-            log!(4, "{who}: {why} at the pre-boot unlock. Next try in {wait}s");
+        Ok(Outcome::Refused { why, booted }) => {
+            let wait = reschedule(ctx, mac, schedule, Verdict::Refused);
+            let what = if booted { format!("booted, but {why}") } else { format!("{why} at the pre-boot unlock") };
+            log!(4, "{who}: {what}. Next try in {wait}s");
         }
         Err(e) => {
-            let wait = reschedule(ctx, mac, schedule, true);
+            let wait = reschedule(ctx, mac, schedule, Verdict::Fault);
             log!(4, "{who}: {e:#}. Next try in {wait}s");
         }
     }
