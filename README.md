@@ -4,6 +4,8 @@ lime unlocks FileVault-encrypted Macs that restarted on their own, such as after
 
 On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at a pre-boot stage. There, a small SSH server accepts a FileVault user's password and unlocks the disk. lime runs on an always-on Linux machine on the same network. It notices a Mac waiting there, checks by its host key that it really is that Mac, and answers with that Mac's password.
 
+**Tested working** on a MacBook Air (M1, 2020) running macOS Tahoe 26.6.1 (25G76).
+
 (Like [Tang](https://github.com/latchset/tang), but a fruit.)
 
 ## How it works, briefly
@@ -20,7 +22,8 @@ On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at 
 
 **Macs**
 - Apple silicon, macOS 26 or later, FileVault on, Remote Login on.
-- At pre-boot, a MacBook is on the network only over Wi-Fi: USB Ethernet adapters need approval after login. Field reports say Wi-Fi at pre-boot works from macOS 26.5 on. Apple lists previously joined open or WPA2-Personal networks, and Ethernet without 802.1X.
+- **A Mac without a built-in Ethernet port**, such as a MacBook, keeps a USB or Thunderbolt Ethernet adapter switched off after a restart until someone logs in and approves it, so until then it's on the network only over Wi-Fi. Setting **System Settings › Privacy & Security › Allow accessories to connect** to **Always** lets the adapter connect with nobody logged in, at the cost of letting any USB or Thunderbolt accessory connect to the Mac while it's locked. Whether the adapter then also works at pre-boot, before the disk is unlocked, hasn't been tested.
+- **Wi-Fi at pre-boot** works from macOS 26.5 on, field reports say. Apple lists previously joined open or WPA2-Personal networks, and Ethernet without 802.1X.
 
 **Linux host**
 - On the same network segment as the Macs, since mDNS does not cross subnets.
@@ -197,7 +200,7 @@ Expect a minute or two before the Mac is up. After a FileVault unlock, macOS sto
 
 ## Limitations
 
-- **Verified against emulated Macs and the real OS's behaviour.** Discovery (systemd-resolved's Varlink mDNS), host-key identification, and all three verdicts — booted, pre-boot refusal, and unlock (the "System successfully unlocked." message, and a clean close or a hang after the password) — have been driven end to end against emulated Macs on a two-host virtual network, with the systemd sandbox checked under systemd 259. The pre-boot unlock is an existing macOS procedure that works by hand on 26.6.1; lime automates it, with the server's behaviour pinned to Apple's `sshd-fvunlock`/`pam_basesystem` source and the 26.6.1 system image (see Sources).
+- **Tested on one real Mac so far.** lime has unlocked a MacBook Air (M1, 2020) on macOS Tahoe 26.6.1 (25G76) after a restart, and then seen it booted; other models and macOS versions haven't been tried. Discovery (systemd-resolved's Varlink mDNS), host-key identification, and all three verdicts — booted, pre-boot refusal, and unlock (the "System successfully unlocked." message, and a clean close or a hang after the password) — have also been driven end to end against emulated Macs on a two-host virtual network, with the systemd sandbox checked under systemd 259. The server's behaviour is pinned to Apple's `sshd-fvunlock`/`pam_basesystem` source and the 26.6.1 system image (see Sources).
 - **The password reaches the booted Mac too.** lime sends it on every check to confirm the Mac is up. The account lands nowhere (2b), and the Mac is pinned by host key, so only root on that same booted Mac could capture it, and they already have the decrypted disk.
 - **A wrong stored password costs attempts.** lime catches one while a Mac is booted and logs it as a warning. If a Mac is at pre-boot, each refused password uses up one of its attempts: macOS adds delays after a few wrong tries and requires Recovery after 10. lime retries on a doubling backoff. Update a changed password promptly (3a).
 - lime doesn't log a user in after the unlock. Anything that needs a login session, such as menu-bar apps or user LaunchAgents, waits until someone logs in, for example over Screen Sharing.
