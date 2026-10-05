@@ -38,7 +38,8 @@ The examples call the Mac `mymac`. That's only a label you choose, used in lime'
 cargo build --release
 sudo install -m 0755 target/release/lime /usr/local/bin/lime
 sudo install -m 0644 lime.service /etc/systemd/system/lime.service
-sudo install -d /etc/lime /etc/credstore.encrypted
+sudo install -d /etc/lime
+sudo install -d -m 0000 /etc/credstore.encrypted   # systemd's own mode for it; root still gets in
 sudo install -m 0644 lime.example.toml /etc/lime/lime.toml
 sudo install -D -m 0644 README.md /usr/local/share/doc/lime/README.md
 ```
@@ -128,6 +129,10 @@ Each password is a credential named `lime.<name>`, matching the Mac's `name` in 
 ```sh
 systemd-ask-password -n "mymac unlock password:" \
   | sudo systemd-creds encrypt --with-key=host+tpm2 --name=lime.mymac - /etc/credstore.encrypted/lime.mymac
+
+# Check it decrypts to the password you meant. -+F -+X make less use the alternate screen,
+# which most terminals keep out of scrollback, even if $LESS says otherwise; q quits.
+sudo systemd-creds decrypt /etc/credstore.encrypted/lime.mymac - | less -+F -+X
 ```
 
 Any password manager's command-line tool can be piped in the same way instead of `systemd-ask-password`. One trailing newline in a credential is ignored. `--with-key=host+tpm2` binds the credential to this machine's TPM *and* its credential secret, so a copied file is useless anywhere else. Without a TPM, use `--with-key=host`.
