@@ -9,7 +9,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 futures-util = "0.3"
-russh = "0.63"
+russh = "0.64"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "fs"] }
 toml = "0.9"
