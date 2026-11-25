@@ -4,7 +4,7 @@
 # Each ecosystem gets one PR a week, on Monday morning, grouping its minor and
 # patch updates; each major comes on its own. Every update waits for Parker to
 # merge it once CI passes: auto-merge stays off until CI tests lime's own logic,
-# not just that it builds.
+# not just that it builds (#7).
 #
 # The cooldown holds each release back until it is two weeks old, so nothing
 # ships while it's days old. Security updates skip it.
