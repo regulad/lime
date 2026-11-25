@@ -16,10 +16,6 @@ repository:
   has_downloads: false
   allow_merge_commit: true
 
-  # workflows/dependabot-auto-merge.yml turns it on for Dependabot's minor, patch and
-  # security updates.
-  allow_auto_merge: true
-
 labels:
   # Dependabot's, for its Cargo pull requests.
   - name: rust
@@ -36,7 +32,7 @@ branches:
     # Branch Protection settings. Set to null to disable
     protection:
       # Required. Require at least one approving review on a pull request, before merging. Set to null to disable.
-      # Off: Dependabot's updates merge on CI alone.
+      # Off: Parker merges Dependabot's updates himself, once CI passes.
       required_pull_request_reviews: null
       # Required. Require status checks to pass before merging. Set to null to disable
       required_status_checks:
