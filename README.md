@@ -37,9 +37,11 @@ The examples call the Mac `mymac`. That's only a label you choose, used in lime'
 
 ### 1. Install lime on the Linux host
 
-Each [release](https://github.com/regulad/lime/releases) has an archive per architecture: `linux-amd64-v3`, for x86-64 CPUs at the x86-64-v3 level (Intel Haswell, AMD Excavator and later), and `linux-arm64`. Each holds lime, the files the commands below install, and `THIRD-PARTY-NOTICES.txt`, the licences of the crates built into it; a `.sha256` sits beside it. They're built on Ubuntu 26.04, so they need its glibc or a later one. Unpack one and run the commands from its directory, with `lime` in place of `target/release/lime`, and also `sudo install -D -m 0644 THIRD-PARTY-NOTICES.txt /usr/local/share/doc/lime/THIRD-PARTY-NOTICES.txt`.
+Each [release](https://github.com/regulad/lime/releases) has an archive per architecture: `linux-amd64-v3`, for x86-64 CPUs at the x86-64-v3 level (Intel Haswell, AMD Excavator and later), and `linux-arm64`. Each holds lime, the files the commands below install, and `THIRD-PARTY-NOTICES.txt`, the licences of the crates built into it; a `.sha256` sits beside it. They're built on Ubuntu 26.04, so they need its glibc or a later one, and OpenSSL 3 (`libssl3`). Unpack one and run the commands from its directory, with `lime` in place of `target/release/lime`, and also `sudo install -D -m 0644 THIRD-PARTY-NOTICES.txt PRIVACY.md -t /usr/local/share/doc/lime`.
 
-Or build lime from a clone, with `cargo build --release`. Then:
+A release sends crash reports and usage counts to Sentry, as [PRIVACY.md](PRIVACY.md) sets out: nothing about your Macs, their passwords or this host's name. Setting `DO_NOT_TRACK=1` in lime's service turns that off.
+
+Or build lime from a clone, with `cargo build --release`. A build from source sends nothing. Then:
 
 ```sh
 sudo install -m 0755 target/release/lime /usr/local/bin/lime

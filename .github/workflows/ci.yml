@@ -59,3 +59,9 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: Tests
         run: cargo test --locked
+      # The release build's `sentry` feature too (Cargo.toml), without
+      # LIME_RELEASE, so it has no DSN and sends nothing.
+      - name: Clippy, with Sentry
+        run: cargo clippy --locked --all-targets --features sentry -- -D warnings
+      - name: Tests, with Sentry
+        run: cargo test --locked --features sentry

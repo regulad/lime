@@ -1,6 +1,6 @@
 [package]
 name = "lime"
-version = "2026.11.25"
+version = "2026.11.25+1"
 edition = "2024"
 description = "Unlock FileVault-encrypted Macs over macOS's pre-boot SSH unlock"
 license = "AGPL-3.0-only"
@@ -14,7 +14,26 @@ serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "fs"] }
 toml = "0.9"
 zlink = "0.8"
+# Crash reports and usage counts, sent only by a release build (src/diagnostics.rs,
+# PRIVACY.md). Sentry's SDK (MIT), as Warlock has it: sending over reqwest with the
+# system's OpenSSL and its certificate store (native-tls), not with Mozilla's roots
+# bundled (webpki-root-certs, under CDLA-Permissive-2.0, which about.toml doesn't
+# accept).
+sentry = { version = "0.49", optional = true, default-features = false, features = ["backtrace", "contexts", "panic", "debug-images", "release-health", "reqwest", "native-tls"] }
+
+[features]
+# Off by default, so a build from source, a distribution's among them, has none of
+# Sentry's crates. The release workflow turns it on.
+sentry = ["dep:sentry"]
 
 [profile.release]
 strip = true
 lto = true
+
+# The release workflow's build: the release profile, keeping the line tables, which
+# go to Sentry, so that the crashes lime reports name their files and lines. The
+# workflow strips the copy it publishes.
+[profile.dist]
+inherits = "release"
+debug = "line-tables-only"
+strip = false

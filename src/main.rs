@@ -18,6 +18,8 @@
 //! pre-boot server can't read it and offers its defaults, so lime knows which stage
 //! refused a password. See README.md.
 
+mod diagnostics;
+
 use std::{
     collections::HashMap,
     net::{SocketAddr, SocketAddrV6},
@@ -557,7 +559,14 @@ async fn visit(ctx: &Ctx, key: &str, svc: &mut Service, schedules: &mut [Schedul
     if now() < schedule.not_before {
         return;
     }
+    let started = Instant::now();
     let outcome = try_unlock(&mut ssh, &unlocked, ctx, mac).await;
+    // A password sent at the pre-boot unlock, which a release build counts.
+    match &outcome {
+        Ok(Outcome::Unlocked) => diagnostics::unlock(started, true),
+        Ok(Outcome::Refused { booted: false, .. }) => diagnostics::unlock(started, false),
+        _ => {}
+    }
     // An unlocking Mac is pivoting into macOS: just drop the connection (with `ssh`).
     if !matches!(outcome, Ok(Outcome::Unlocked)) {
         let _ = ssh.disconnect(Disconnect::ByApplication, "", "en").await;
@@ -605,8 +614,13 @@ async fn visit(ctx: &Ctx, key: &str, svc: &mut Service, schedules: &mut [Schedul
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    let _diagnostics = diagnostics::start();
     // zlink's streams are not Send, so the watchers are local tasks.
-    tokio::task::LocalSet::new().run_until(run()).await
+    let result = tokio::task::LocalSet::new().run_until(run()).await;
+    if result.is_err() {
+        diagnostics::failed();
+    }
+    result
 }
 
 async fn run() -> Result<()> {
@@ -634,6 +648,7 @@ async fn run() -> Result<()> {
             let e = watch(ifindex, &tx).await.unwrap_err();
             // systemd restarts the service (Restart=on-failure).
             log!(3, "browsing {SSH} on interface {ifindex}: {e:#}");
+            diagnostics::failed();
             std::process::exit(1);
         });
         ifnames.insert(ifindex, ifname);
