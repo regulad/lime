@@ -16,8 +16,42 @@ repository:
   has_downloads: false
   allow_merge_commit: true
 
+  # workflows/dependabot-auto-merge.yml turns it on for Dependabot's minor, patch and
+  # security updates.
+  allow_auto_merge: true
+
 labels:
   # Dependabot's, for its Cargo pull requests.
   - name: rust
     color: "000000"
     description: Pull requests that update rust code
+  # Dependabot's, for its GitHub Actions pull requests.
+  - name: github_actions
+    color: "000000"
+    description: Pull requests that update GitHub Actions code
+
+branches:
+  - name: master
+    # https://docs.github.com/en/rest/reference/repos#update-branch-protection
+    # Branch Protection settings. Set to null to disable
+    protection:
+      # Required. Require at least one approving review on a pull request, before merging. Set to null to disable.
+      # Off: Dependabot's updates merge on CI alone.
+      required_pull_request_reviews: null
+      # Required. Require status checks to pass before merging. Set to null to disable
+      required_status_checks:
+        # Required. Require branches to be up to date before merging.
+        # Off: Dependabot doesn't rebase a PR just because master moved, so a stale PR would never merge.
+        strict: false
+        # Required. The list of status checks to require in order to merge into this branch
+        # The jobs in workflows/ci.yml that run on pull requests, by name.
+        contexts:
+          - Build and test (amd64)
+          - Build and test (arm64)
+      # Required. Enforce all configured restrictions for administrators. Set to true to enforce required status checks for repository administrators. Set to null to disable.
+      # Off: Parker still pushes to master directly.
+      enforce_admins: false
+      # Required. Restrict who can push to this branch. Team and user restrictions are only available for organization-owned repositories. Set to null to disable.
+      # Off: this is a personal repository, where GitHub rejects user and team restrictions, and with them the whole
+      # protection.
+      restrictions: null

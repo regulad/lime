@@ -1,0 +1,61 @@
+# Builds lime and runs its tests on every pull request, Dependabot's among
+# them, and every push to master.
+#
+# lime runs on the Linux host, not on the Macs (README.md): it needs
+# systemd-resolved and systemd-creds there. So it's built on Linux, on each
+# architecture's own runner: amd64 at the x86-64-v3 level, and arm64.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+            rustflags: -C target-cpu=x86-64-v3
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+            rustflags: ""
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustup component add rustfmt clippy
+      - name: Format
+        run: cargo fmt --check
+      # Cargo's downloads and the dependencies' object files, keyed on
+      # Cargo.lock, the toolchain and RUSTFLAGS, so each architecture has its
+      # own. Only a push to master saves it; pull requests read master's.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Build
+        run: cargo build --locked
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --locked

@@ -1,0 +1,39 @@
+# Dependabot keeps lime's dependencies current: the Rust crate (Cargo.toml,
+# Cargo.lock) and the GitHub Actions in .github/workflows/.
+#
+# Each ecosystem gets one PR a week, on Monday morning, grouping its minor and
+# patch updates; each major comes on its own. workflows/dependabot-auto-merge.yml
+# has GitHub merge every update but a major one once CI passes, security
+# updates included. The actions group waits for a person, since workflow
+# changes get a review, and so do major updates.
+#
+# The cooldown holds each release back until it is two weeks old, so nothing
+# ships while it's days old. Security updates skip it.
+version: 2
+
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    cooldown:
+      default-days: 14
+    groups:
+      cargo:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "America/New_York"
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        update-types: ["minor", "patch"]
