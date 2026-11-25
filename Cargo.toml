@@ -1,6 +1,6 @@
 [package]
 name = "lime"
-version = "0.1.0"
+version = "2026.11.25"
 edition = "2024"
 description = "Unlock FileVault-encrypted Macs over macOS's pre-boot SSH unlock"
 license = "AGPL-3.0-only"

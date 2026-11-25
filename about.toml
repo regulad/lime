@@ -1,0 +1,29 @@
+# cargo-about's configuration: the release workflow writes THIRD-PARTY-NOTICES.txt
+# from it and about.hbs into each release archive, as the licences of the crates
+# built into lime ask of a binary distribution (.github/workflows/release.yml).
+#
+# The licences lime takes its dependencies under, most preferred first: where a
+# crate offers a choice, the notices carry the first of these it offers. Each is
+# compatible with lime's AGPL-3.0.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "BSL-1.0",
+    "0BSD",
+    "MIT-0",
+    "CC0-1.0",
+]
+# The release's two builds (README.md, Requirements).
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+# Only what's built into the binary.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# lime itself.
+[lime]
+accepted = ["AGPL-3.0-only"]

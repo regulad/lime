@@ -29,7 +29,7 @@ On macOS 26, an Apple silicon Mac with Remote Login on waits after a restart at 
 - On the same network segment as the Macs, since mDNS does not cross subnets.
 - systemd-resolved with mDNS on for that interface, and a systemd new enough to have `io.systemd.Resolve.BrowseServices`. Developed against systemd 259.
 - `systemd-creds` for the secrets. A TPM2 (a vTPM is fine) is recommended.
-- Rust 1.88 or later to build.
+- Rust 1.88 or later to build lime from source.
 
 ## Setup
 
@@ -37,8 +37,11 @@ The examples call the Mac `mymac`. That's only a label you choose, used in lime'
 
 ### 1. Install lime on the Linux host
 
+Each [release](https://github.com/regulad/lime/releases) has an archive per architecture: `linux-amd64-v3`, for x86-64 CPUs at the x86-64-v3 level (Intel Haswell, AMD Excavator and later), and `linux-arm64`. Each holds lime, the files the commands below install, and `THIRD-PARTY-NOTICES.txt`, the licences of the crates built into it; a `.sha256` sits beside it. They're built on Ubuntu 26.04, so they need its glibc or a later one. Unpack one and run the commands from its directory, with `lime` in place of `target/release/lime`, and also `sudo install -D -m 0644 THIRD-PARTY-NOTICES.txt /usr/local/share/doc/lime/THIRD-PARTY-NOTICES.txt`.
+
+Or build lime from a clone, with `cargo build --release`. Then:
+
 ```sh
-cargo build --release
 sudo install -m 0755 target/release/lime /usr/local/bin/lime
 sudo install -m 0644 lime.service /etc/systemd/system/lime.service
 sudo install -d /etc/lime

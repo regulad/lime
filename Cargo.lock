@@ -960,7 +960,7 @@ checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
 
 [[package]]
 name = "lime"
-version = "0.1.0"
+version = "2026.11.25"
 dependencies = [
  "anyhow",
  "futures-util",

@@ -1,0 +1,140 @@
+# Publishes a release from an annotated tag: lime for each architecture, built
+# on its own runner as ci.yml builds it (amd64 at the x86-64-v3 level, and
+# arm64), each in an archive with what README.md's Setup installs and the
+# crates' licence notices, and a .sha256 beside it.
+#
+# Versions are dates, YYYY.M.D without leading zeros; a second release that
+# day adds _1, then _2. The tag is v<version>, and Cargo.toml's version is the
+# same date, with the suffix as build metadata, which Cargo takes where it
+# refuses an underscore:
+#
+#   v2026.11.25    Cargo.toml 2026.11.25
+#   v2026.11.25_1  Cargo.toml 2026.11.25+1
+#
+# The tag's message is the release's notes:
+#
+#   git tag -a v2026.11.25 -m "<notes>" && git push origin v2026.11.25
+#
+# The jobs that build hold no token that can write; only the last one, which
+# builds nothing, publishes.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+            rustflags: -C target-cpu=x86-64-v3
+            # The level the build needs, which the archive's name carries.
+            suffix: amd64-v3
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+            rustflags: ""
+            suffix: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Rust
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          cargo --version
+      - name: The tag names Cargo.toml's version
+        run: |
+          want="${TAG#v}"
+          want="${want/_/+}"
+          have=$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "lime") | .version')
+          if [ "$have" != "$want" ]; then
+            echo "The tag $TAG wants version $want in Cargo.toml, which has $have."
+            exit 1
+          fi
+      # ci.yml's cache is the dev profile's, which this release build doesn't
+      # use; and a tag's run could save only for that tag, which nothing else
+      # reads. So it builds from nothing.
+      - name: Build
+        run: cargo build --release --locked
+      # The notices for the crates built in (about.toml), with cargo-about
+      # pinned by its SHA-256.
+      - name: cargo-about
+        env:
+          VERSION: 0.9.3
+          ARCH: ${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          SHA256_x86_64: 3ad1e94ea1e63d69d1961f4fb15ccbbe9575d906111f96d2cb4dce6df48f71b4
+          SHA256_aarch64: eb4d9ff6ebd2518152a8308729431a04b3836e71d2bd5ead7aea69f91a71162e
+        run: |
+          name="cargo-about-$VERSION-$ARCH-unknown-linux-musl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/EmbarkStudios/cargo-about/releases/download/$VERSION/$name.tar.gz"
+          sha="SHA256_$ARCH"
+          echo "${!sha}  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/$name/cargo-about" about generate --locked --fail \
+            -o THIRD-PARTY-NOTICES.txt about.hbs
+      - name: Archive
+        env:
+          SUFFIX: ${{ matrix.suffix }}
+        run: |
+          name="lime-${TAG#v}-linux-$SUFFIX"
+          mkdir "$name"
+          cp target/release/lime lime.service lime.example.toml README.md LICENSE.md THIRD-PARTY-NOTICES.txt "$name/"
+          tar -czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          tar -tzvf "$name.tar.gz"
+          cat "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lime-${{ matrix.suffix }}
+          path: lime-*.tar.gz*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      # gh reads the notes from the tag in a clone: --notes-from-tag refuses
+      # --repo. Checkout leaves the tag lightweight, pointing at the commit
+      # (actions/checkout#290), so the annotated tag, message and all, is
+      # fetched over it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch the annotated tag
+        run: |
+          git fetch --force --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
+          if [ "$(git cat-file -t "$TAG")" != tag ]; then
+            echo "$TAG isn't an annotated tag: its message is the release notes (git tag -a)."
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: lime-*
+          path: assets
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l assets
+          gh release create "$TAG" assets/* --title "lime ${TAG#v}" --notes-from-tag --verify-tag
