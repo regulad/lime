@@ -95,32 +95,49 @@ struct Ctx {
 /// Reads a credential that systemd placed in this service's private
 /// `$CREDENTIALS_DIRECTORY` (`ImportCredential=lime.*`).
 fn credential(name: &str) -> Result<String> {
-    let dir = std::env::var_os("CREDENTIALS_DIRECTORY")
-        .context("$CREDENTIALS_DIRECTORY is unset; run lime under systemd with ImportCredential=lime.*")?;
-    let text = std::fs::read_to_string(Path::new(&dir).join(name)).with_context(|| format!("reading credential {name}"))?;
+    let dir = std::env::var_os("CREDENTIALS_DIRECTORY").context(
+        "$CREDENTIALS_DIRECTORY is unset; run lime under systemd with ImportCredential=lime.*",
+    )?;
+    let text = std::fs::read_to_string(Path::new(&dir).join(name))
+        .with_context(|| format!("reading credential {name}"))?;
     Ok(text.strip_suffix('\n').unwrap_or(&text).to_owned())
 }
 
 fn load(path: &str, dry_run: bool) -> Result<(Vec<String>, Ctx)> {
-    let cfg: Config = toml::from_str(&std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?)
-        .with_context(|| format!("parsing {path}"))?;
+    let cfg: Config =
+        toml::from_str(&std::fs::read_to_string(path).with_context(|| format!("reading {path}"))?)
+            .with_context(|| format!("parsing {path}"))?;
     if cfg.interfaces.is_empty() || cfg.mac.is_empty() {
         bail!("{path} needs at least one interface and one [[mac]]");
     }
     let mut macs = cfg.mac;
     for mac in &mut macs {
-        let keys = mac.host_keys.iter().map(|k| PublicKey::from_openssh(k).with_context(|| format!("{}: bad host key {k:?}", mac.name)));
+        let keys = mac.host_keys.iter().map(|k| {
+            PublicKey::from_openssh(k).with_context(|| format!("{}: bad host key {k:?}", mac.name))
+        });
         mac.pinned = keys.collect::<Result<_>>()?;
         if mac.pinned.is_empty() {
             bail!("{}: needs at least one host key", mac.name);
         }
     }
-    let state = std::env::var_os("STATE_DIRECTORY").map_or_else(|| PathBuf::from("/var/lib/lime"), PathBuf::from);
-    let ssh = client::Config { inactivity_timeout: Some(TIMEOUT), ..Default::default() };
+    let state = std::env::var_os("STATE_DIRECTORY")
+        .map_or_else(|| PathBuf::from("/var/lib/lime"), PathBuf::from);
+    let ssh = client::Config {
+        inactivity_timeout: Some(TIMEOUT),
+        ..Default::default()
+    };
     let heartbeat = cfg.heartbeat.unwrap_or(30);
     let base_retry = cfg.base_retry.unwrap_or(900);
     let max_retry = cfg.max_retry.unwrap_or(21600).max(base_retry);
-    let ctx = Ctx { macs: Arc::new(macs), ssh: Arc::new(ssh), state, heartbeat, base_retry, max_retry, dry_run };
+    let ctx = Ctx {
+        macs: Arc::new(macs),
+        ssh: Arc::new(ssh),
+        state,
+        heartbeat,
+        base_retry,
+        max_retry,
+        dry_run,
+    };
     Ok((cfg.interfaces, ctx))
 }
 
@@ -199,14 +216,21 @@ struct Event {
 
 /// Streams the SSH servers' comings and goings on one interface.
 async fn watch(ifindex: i32, tx: &mpsc::Sender<Event>) -> Result<()> {
-    let mut conn = zlink::tokio::unix::connect(RESOLVE).await.context("connecting to systemd-resolved")?;
+    let mut conn = zlink::tokio::unix::connect(RESOLVE)
+        .await
+        .context("connecting to systemd-resolved")?;
     let stream = conn.browse_services("local", SSH, ifindex).await?;
     pin_mut!(stream);
     while let Some(reply) = stream.next().await {
         let reply = reply?.map_err(|e| anyhow!("BrowseServices: {e:?}"))?;
         for s in reply.browser_service_data {
             let Some(name) = s.name else { continue };
-            tx.send(Event { ifindex, name, added: s.update_flag == Update::Added }).await?;
+            tx.send(Event {
+                ifindex,
+                name,
+                added: s.update_flag == Update::Added,
+            })
+            .await?;
         }
     }
     bail!("BrowseServices ended")
@@ -214,15 +238,31 @@ async fn watch(ifindex: i32, tx: &mpsc::Sender<Event>) -> Result<()> {
 
 /// Resolves an `_ssh._tcp` instance to an address, preferring IPv4: an IPv6 answer
 /// is often link-local, which works too, but only with the interface as its scope.
-async fn resolve(conn: &mut zlink::Connection<zlink::tokio::unix::Stream>, ifindex: i32, name: &str) -> Result<SocketAddr> {
-    let resolved = conn.resolve_service(name, SSH, "local", ifindex).await?.map_err(|e| anyhow!("{e:?}"))?;
+async fn resolve(
+    conn: &mut zlink::Connection<zlink::tokio::unix::Stream>,
+    ifindex: i32,
+    name: &str,
+) -> Result<SocketAddr> {
+    let resolved = conn
+        .resolve_service(name, SSH, "local", ifindex)
+        .await?
+        .map_err(|e| anyhow!("{e:?}"))?;
     let srv = resolved.services.first().context("no SRV record")?;
     let addrs = srv.addresses.as_deref().unwrap_or_default();
-    let v4 = addrs.iter().find_map(|a| <[u8; 4]>::try_from(a.address.as_slice()).ok());
-    let v6 = addrs.iter().find_map(|a| <[u8; 16]>::try_from(a.address.as_slice()).ok());
+    let v4 = addrs
+        .iter()
+        .find_map(|a| <[u8; 4]>::try_from(a.address.as_slice()).ok());
+    let v6 = addrs
+        .iter()
+        .find_map(|a| <[u8; 16]>::try_from(a.address.as_slice()).ok());
     match (v4, v6) {
         (Some(ip), _) => Ok(SocketAddr::from((ip, srv.port))),
-        (None, Some(ip)) => Ok(SocketAddr::V6(SocketAddrV6::new(ip.into(), srv.port, 0, ifindex as u32))),
+        (None, Some(ip)) => Ok(SocketAddr::V6(SocketAddrV6::new(
+            ip.into(),
+            srv.port,
+            0,
+            ifindex as u32,
+        ))),
         (None, None) => bail!("no address"),
     }
 }
@@ -240,9 +280,17 @@ struct Identify {
 impl client::Handler for Identify {
     type Error = russh::Error;
 
-    async fn check_server_key(&mut self, offered: &PublicKeyOrCertificate) -> Result<bool, Self::Error> {
-        let PublicKeyOrCertificate::PublicKey { key, .. } = offered else { return Ok(false) };
-        let found = self.macs.iter().position(|m| m.pinned.iter().any(|p| p.key_data() == key.key_data()));
+    async fn check_server_key(
+        &mut self,
+        offered: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        let PublicKeyOrCertificate::PublicKey { key, .. } = offered else {
+            return Ok(false);
+        };
+        let found = self
+            .macs
+            .iter()
+            .position(|m| m.pinned.iter().any(|p| p.key_data() == key.key_data()));
         *self.matched.lock().unwrap() = found;
         Ok(found.is_some())
     }
@@ -251,7 +299,11 @@ impl client::Handler for Identify {
     /// nothing the account runs can produce. A real Mac sends the unlock's success
     /// text in a keyboard-interactive round instead (`says_unlocked`); lime takes it
     /// from a banner too.
-    async fn auth_banner(&mut self, banner: &str, _: &mut client::Session) -> Result<(), Self::Error> {
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _: &mut client::Session,
+    ) -> Result<(), Self::Error> {
         if banner.contains(UNLOCKED) {
             self.unlocked.store(true, Ordering::Release);
         }
@@ -261,9 +313,17 @@ impl client::Handler for Identify {
 
 /// Connects, returning the session and which Mac it is, or `None` if the server's
 /// host key belongs to no configured Mac.
-async fn connect(ctx: &Ctx, addr: SocketAddr, unlocked: &Arc<AtomicBool>) -> Result<Option<(client::Handle<Identify>, usize)>> {
+async fn connect(
+    ctx: &Ctx,
+    addr: SocketAddr,
+    unlocked: &Arc<AtomicBool>,
+) -> Result<Option<(client::Handle<Identify>, usize)>> {
     let matched = Arc::new(Mutex::new(None));
-    let handler = Identify { macs: ctx.macs.clone(), matched: matched.clone(), unlocked: unlocked.clone() };
+    let handler = Identify {
+        macs: ctx.macs.clone(),
+        matched: matched.clone(),
+        unlocked: unlocked.clone(),
+    };
     match time::timeout(TIMEOUT, client::connect(ctx.ssh.clone(), addr, handler)).await {
         Err(_) => bail!("timed out connecting"),
         Ok(Err(russh::Error::UnknownKey)) => Ok(None),
@@ -289,17 +349,34 @@ enum Outcome {
 /// OpenSSH passes PAM's text messages on as a round's instruction (as a Mac at the
 /// pre-boot unlock does, in a round with no prompts), or ahead of its next prompt.
 fn says_unlocked(round: &Kbd) -> bool {
-    let Kbd::InfoRequest { instructions, prompts, .. } = round else { return false };
+    let Kbd::InfoRequest {
+        instructions,
+        prompts,
+        ..
+    } = round
+    else {
+        return false;
+    };
     instructions.contains(UNLOCKED) || prompts.iter().any(|p| p.prompt.contains(UNLOCKED))
 }
 
 /// Logs in as the Mac's unlock account with its password.
-async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, ctx: &Ctx, mac: &Mac) -> Result<Outcome> {
+async fn try_unlock(
+    ssh: &mut client::Handle<Identify>,
+    unlocked: &AtomicBool,
+    ctx: &Ctx,
+    mac: &Mac,
+) -> Result<Outcome> {
     let user = &mac.unlock_user;
     // A booted Mac's drop-in limits the account to keyboard-interactive. The pre-boot
     // server can't read the drop-in, and offers its defaults.
-    let methods = match time::timeout(TIMEOUT, ssh.authenticate_none(user.clone())).await.context("timed out")?? {
-        AuthResult::Failure { remaining_methods, .. } => remaining_methods,
+    let methods = match time::timeout(TIMEOUT, ssh.authenticate_none(user.clone()))
+        .await
+        .context("timed out")??
+    {
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => remaining_methods,
         AuthResult::Success => bail!("{user} was let in without a password"),
     };
     if !methods.contains(&MethodKind::KeyboardInteractive) {
@@ -307,12 +384,24 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
     }
     // A booted Mac's drop-in offers only keyboard-interactive; the pre-boot server
     // offers its defaults (publickey, password, keyboard-interactive).
-    let booted = methods.iter().all(|m| *m == MethodKind::KeyboardInteractive);
+    let booted = methods
+        .iter()
+        .all(|m| *m == MethodKind::KeyboardInteractive);
     if ctx.dry_run {
-        return Ok(if booted { Outcome::Booted } else { Outcome::Locked });
+        return Ok(if booted {
+            Outcome::Booted
+        } else {
+            Outcome::Locked
+        });
     }
-    let first = time::timeout(TIMEOUT, ssh.authenticate_keyboard_interactive_start(user.clone(), None)).await.context("timed out")??;
-    if !matches!(&first, Kbd::InfoRequest { prompts, .. } if prompts.len() == 1 && !prompts[0].echo) {
+    let first = time::timeout(
+        TIMEOUT,
+        ssh.authenticate_keyboard_interactive_start(user.clone(), None),
+    )
+    .await
+    .context("timed out")??;
+    if !matches!(&first, Kbd::InfoRequest { prompts, .. } if prompts.len() == 1 && !prompts[0].echo)
+    {
         bail!("expected a single hidden password prompt, got {first:?}");
     }
 
@@ -322,9 +411,15 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
     // an explicit refusal (Failure, a re-prompt, or an error message) is a refusal; a
     // wrong password always comes back as one of those, never as a silent drop.
     let password = credential(&format!("lime.{}", mac.name))?;
-    let mut reply = time::timeout(TIMEOUT, ssh.authenticate_keyboard_interactive_respond(vec![password])).await;
+    let mut reply = time::timeout(
+        TIMEOUT,
+        ssh.authenticate_keyboard_interactive_respond(vec![password]),
+    )
+    .await;
     loop {
-        if unlocked.load(Ordering::Acquire) || matches!(&reply, Ok(Ok(round)) if says_unlocked(round)) {
+        if unlocked.load(Ordering::Acquire)
+            || matches!(&reply, Ok(Ok(round)) if says_unlocked(round))
+        {
             return Ok(Outcome::Unlocked);
         }
         let why: String = match reply {
@@ -332,14 +427,22 @@ async fn try_unlock(ssh: &mut client::Handle<Identify>, unlocked: &AtomicBool, c
             Ok(Ok(Kbd::Success)) => return Ok(Outcome::Booted),
             Ok(Ok(Kbd::Failure { .. })) => "password refused".to_owned(),
             // Asked again: refused. lime never answers a second time.
-            Ok(Ok(Kbd::InfoRequest { prompts, .. })) if !prompts.is_empty() => "asked for the password again".to_owned(),
+            Ok(Ok(Kbd::InfoRequest { prompts, .. })) if !prompts.is_empty() => {
+                "asked for the password again".to_owned()
+            }
             // PAM's failure text, such as "Account ... is temporarily unavailable."
             // while the Secure Enclave enforces a delay.
-            Ok(Ok(Kbd::InfoRequest { instructions, .. })) if !instructions.trim().is_empty() => format!("the Mac says {:?}", instructions.trim()),
+            Ok(Ok(Kbd::InfoRequest { instructions, .. })) if !instructions.trim().is_empty() => {
+                format!("the Mac says {:?}", instructions.trim())
+            }
             // An empty round: PAM accepted the password. Answer it; the Mac may send
             // its success text and pivot instead of replying, which the checks above catch.
             Ok(Ok(Kbd::InfoRequest { .. })) => {
-                reply = time::timeout(TIMEOUT, ssh.authenticate_keyboard_interactive_respond(vec![])).await;
+                reply = time::timeout(
+                    TIMEOUT,
+                    ssh.authenticate_keyboard_interactive_respond(vec![]),
+                )
+                .await;
                 continue;
             }
         };
@@ -358,15 +461,26 @@ struct Schedule {
 }
 
 fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 fn load_schedule(ctx: &Ctx, mac: &Mac) -> Schedule {
-    let saved = std::fs::read_to_string(ctx.state.join(&mac.name)).ok().and_then(|s| {
-        let mut n = s.split_whitespace().map(|v| v.parse().ok());
-        Some(Schedule { not_before: n.next()??, backoff: n.next()?? })
-    });
-    saved.unwrap_or(Schedule { not_before: 0, backoff: ctx.base_retry })
+    let saved = std::fs::read_to_string(ctx.state.join(&mac.name))
+        .ok()
+        .and_then(|s| {
+            let mut n = s.split_whitespace().map(|v| v.parse().ok());
+            Some(Schedule {
+                not_before: n.next()??,
+                backoff: n.next()??,
+            })
+        });
+    saved.unwrap_or(Schedule {
+        not_before: 0,
+        backoff: ctx.base_retry,
+    })
 }
 
 /// How a visit went, for scheduling the next one.
@@ -388,10 +502,16 @@ fn reschedule(ctx: &Ctx, mac: &Mac, s: &mut Schedule, verdict: Verdict) -> u64 {
         Verdict::Refused => (s.backoff, (s.backoff * 2).min(ctx.max_retry)),
         Verdict::Fault => (ctx.heartbeat, s.backoff),
     };
-    *s = Schedule { not_before: now() + wait, backoff };
+    *s = Schedule {
+        not_before: now() + wait,
+        backoff,
+    };
     // A dry run's schedule only stops it repeating itself; the service shouldn't inherit it.
     if !ctx.dry_run
-        && let Err(e) = std::fs::write(ctx.state.join(&mac.name), format!("{} {}\n", s.not_before, s.backoff))
+        && let Err(e) = std::fs::write(
+            ctx.state.join(&mac.name),
+            format!("{} {}\n", s.not_before, s.backoff),
+        )
     {
         log!(3, "{}: could not save its schedule: {e}", mac.name);
     }
@@ -446,20 +566,34 @@ async fn visit(ctx: &Ctx, key: &str, svc: &mut Service, schedules: &mut [Schedul
     match outcome {
         Ok(Outcome::Booted) => {
             let wait = reschedule(ctx, mac, schedule, Verdict::Fine);
-            let how = if ctx.dry_run { "booted (only keyboard-interactive offered)" } else { "booted (password accepted, account turned away)" };
+            let how = if ctx.dry_run {
+                "booted (only keyboard-interactive offered)"
+            } else {
+                "booted (password accepted, account turned away)"
+            };
             log!(6, "{who}: {how}. Next check in {wait}s");
         }
         Ok(Outcome::Locked) => {
             reschedule(ctx, mac, schedule, Verdict::Fine);
-            log!(5, "{who}: at the pre-boot unlock: would send the password. Dry run");
+            log!(
+                5,
+                "{who}: at the pre-boot unlock: would send the password. Dry run"
+            );
         }
         Ok(Outcome::Unlocked) => {
             let wait = reschedule(ctx, mac, schedule, Verdict::Fine);
-            log!(5, "{who}: unlocked; macOS is starting. Next check in {wait}s");
+            log!(
+                5,
+                "{who}: unlocked; macOS is starting. Next check in {wait}s"
+            );
         }
         Ok(Outcome::Refused { why, booted }) => {
             let wait = reschedule(ctx, mac, schedule, Verdict::Refused);
-            let what = if booted { format!("booted, but {why}") } else { format!("{why} at the pre-boot unlock") };
+            let what = if booted {
+                format!("booted, but {why}")
+            } else {
+                format!("{why} at the pre-boot unlock")
+            };
             log!(4, "{who}: {what}. Next try in {wait}s");
         }
         Err(e) => {
@@ -505,8 +639,15 @@ async fn run() -> Result<()> {
         ifnames.insert(ifindex, ifname);
     }
 
-    log!(6, "watching for {} Mac(s){}", ctx.macs.len(), if dry_run { " (dry run)" } else { "" });
-    let mut resolver = zlink::tokio::unix::connect(RESOLVE).await.context("connecting to systemd-resolved")?;
+    log!(
+        6,
+        "watching for {} Mac(s){}",
+        ctx.macs.len(),
+        if dry_run { " (dry run)" } else { "" }
+    );
+    let mut resolver = zlink::tokio::unix::connect(RESOLVE)
+        .await
+        .context("connecting to systemd-resolved")?;
     let mut schedules: Vec<Schedule> = ctx.macs.iter().map(|m| load_schedule(&ctx, m)).collect();
     let mut services: HashMap<(i32, String), Service> = HashMap::new();
     let mut tick = time::interval(Duration::from_secs(1));
